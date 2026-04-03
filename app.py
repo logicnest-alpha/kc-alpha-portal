@@ -1,117 +1,143 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-import numpy as np
 import plotly.express as px
+from openai import OpenAI
 
-# 1. ALPHA UI ARCHITECTURE
-st.set_page_config(page_title="KC Alpha | Syndicate OS", layout="wide")
+# 1. PREMIUM PAGE CONFIGURATION
+st.set_page_config(
+    page_title="KC Alpha | Syndicate OS",
+    page_icon="🛡️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-st.markdown("""
-    <style>
-    .stApp { background-color: #050505; }
-    /* Glassmorphism Cards */
-    div[data-testid="column"] {
-        background: rgba(255, 255, 255, 0.02);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        backdrop-filter: blur(20px);
-        padding: 25px !important;
-        border-radius: 20px !important;
-    }
-    h1, h2, h3, p, span { color: #FFFFFF !important; font-family: 'Inter', sans-serif; }
-    div[data-testid="stMetricValue"] { color: #38BDF8 !important; font-weight: 800; text-shadow: 0 0 10px rgba(56,189,248,0.3); }
-    .stButton>button { background-color: #38BDF8; color: black; border-radius: 10px; width: 100%; font-weight: bold; }
-    </style>
-    """, unsafe_allow_html=True)
+# 2. WHITE-LABEL UI HACK (Hides Streamlit Branding)
+hide_st_style = """
+            <style>
+            #MainMenu {visibility: hidden;}
+            header {visibility: hidden;}
+            footer {visibility: hidden;}
+            .stAppDeployButton {display:none;}
+            /* Custom Glassmorphism Card Style */
+            .stMetric {
+                background: rgba(255, 255, 255, 0.05);
+                padding: 15px;
+                border-radius: 10px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+            }
+            </style>
+            """
+st.markdown(hide_st_style, unsafe_allow_html=True)
 
-# 2. SECURITY GATEKEEPER
-def check_auth():
-    def login_attempt():
-        # Validates against .streamlit/secrets.toml [credentials]
-        if st.session_state["user"] in st.secrets["credentials"] and \
-           st.session_state["pw"] == st.secrets["credentials"][st.session_state["user"]]:
-            st.session_state["auth_active"] = True
+# 3. AUTHENTICATION LOGIC
+def check_password():
+    """Returns True if the user had the correct password."""
+    def password_entered():
+        if st.session_state["username"] in st.secrets["credentials"] and \
+           st.session_state["password"] == st.secrets["credentials"][st.session_state["username"]]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # don't store password
+            del st.session_state["username"]
         else:
-            st.session_state["auth_active"] = False
-            st.error("Invalid Intelligence Credentials")
+            st.session_state["password_correct"] = False
 
-    if "auth_active" not in st.session_state or not st.session_state["auth_active"]:
-        st.markdown("<h1 style='text-align: center;'>🛡️ SYNDICATE LOGIN</h1>", unsafe_allow_html=True)
-        st.text_input("Username", key="user", placeholder="Enter Client ID")
-        st.text_input("Security Key", type="password", key="pw", placeholder="••••••••")
-        st.button("Enter Secure Node", on_click=login_attempt)
+    if "password_correct" not in st.session_state:
+        # First run, show inputs for username + password.
+        st.title("🛡️ SYNDICATE LOGIN")
+        st.text_input("Username", key="username")
+        st.text_input("Password", type="password", key="password")
+        st.button("Log In", on_click=password_entered)
+        st.info("Authorized Personnel Only. Logins are tracked.")
         return False
-    return True
+    elif not st.session_state["password_correct"]:
+        # Password not correct, show error + re-render inputs.
+        st.error("❌ Invalid Credentials")
+        st.text_input("Username", key="username")
+        st.text_input("Password", type="password", key="password")
+        st.button("Log In", on_click=password_entered)
+        return False
+    else:
+        # Password correct.
+        return True
 
-# 3. ANALYTICS LOGIC
-def get_insights(df):
-    count = len(df)
-    if count > 10:
-        return "Synthesis: High-velocity lead flow detected. Recommend scaling architecture by 15%."
-    return "Status: Initial calibration active. Maintaining current market synthesis."
+# 4. START APP IF AUTHENTICATED
+if check_password():
+    
+    # --- DATA ENGINE ---
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    df = conn.read(ttl="1m") # Auto-refresh every minute
 
-# 4. DASHBOARD EXECUTION
-if check_auth():
-    # SYNC WITH MASTER WAREHOUSE
-    try:
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        # It pulls the URL automatically from .streamlit/secrets.toml
-        master_df = conn.read(ttl=0)
+    # --- SIDEBAR NAVIGATION ---
+    st.sidebar.title("KC ALPHA")
+    st.sidebar.image("https://img.icons8.com/ios-filled/100/ffffff/shield.png", width=100)
+    page = st.sidebar.radio("Navigation", ["Executive Dashboard", "AI Command Center", "Lead Database"])
+
+    # --- PAGE 1: EXECUTIVE DASHBOARD ---
+    if page == "Executive Dashboard":
+        st.title("📈 Executive Intelligence")
         
-        # --- THE SECURITY FILTER ---
-        # Only grab rows where 'Client_Name' column matches the logged-in username
-        current_user = st.session_state["user"]
-        client_df = master_df[master_df['Client_Name'] == current_user].copy()
-        client_df['Date'] = pd.to_datetime(client_df['Date'])
-    except Exception as e:
-        st.error(f"Engine Connection Error: {e}")
-        st.stop()
+        # Metrics Row
+        m1, m2, m3 = st.columns(3)
+        total_leads = len(df)
+        ad_spend = df['Ad_Spend'].sum() if 'Ad_Spend' in df.columns else 0
+        cpl = ad_spend / total_leads if total_leads > 0 else 0
+        
+        m1.metric("Total Alpha Leads", total_leads)
+        m2.metric("Total Ad Spend", f"₹{ad_spend:,}")
+        m3.metric("Cost Per Lead", f"₹{cpl:.2f}")
 
-    if not client_df.empty:
-        # SIDEBAR CONTROL
-        st.sidebar.markdown(f"<h2 style='color: #38BDF8;'>🛡️ {current_user.upper()}</h2>", unsafe_allow_html=True)
-        st.sidebar.write("`STATUS: OPTIMIZED`")
-        if st.sidebar.button("Logout"):
-            st.session_state.clear()
+        # Charts
+        st.markdown("---")
+        c1, c2 = st.columns(2)
+        with c1:
+            fig = px.area(df, x="Date", y="Ad_Spend", title="Spending Velocity", color_discrete_sequence=['#00D4FF'])
+            st.plotly_chart(fig, use_container_width=True)
+        with c2:
+            fig2 = px.pie(df, names="Status", title="Lead Pipeline Health", hole=0.5)
+            st.plotly_chart(fig2, use_container_width=True)
+
+    # --- PAGE 2: AI COMMAND CENTER (GROK INTEGRATION) ---
+    elif page == "AI Command Center":
+        st.title("🤖 Agentic Command Center")
+        st.subheader("Powered by Grok-Beta")
+
+        # Initialize Grok
+        client = OpenAI(api_key=st.secrets["GROK_API_KEY"], base_url="https://api.x.ai/v1")
+
+        selected_lead = st.selectbox("Select a Lead to Process", df['Lead_Name'].unique())
+        
+        if st.button("Analyze with Agent Alpha"):
+            lead_data = df[df['Lead_Name'] == selected_lead].iloc[0]
+            
+            with st.status("Agent Alpha is analyzing...", expanded=True) as status:
+                st.write("🔍 Extracting lead metadata...")
+                st.write("🧠 Consulting Grok Knowledge Base...")
+                
+                prompt = f"Analyze this lead: {selected_lead}. Details: {lead_data.to_dict()}. " \
+                         f"Give a score 1-10 and draft a personalized high-ticket pitch."
+                
+                response = client.chat.completions.create(
+                    model="grok-beta",
+                    messages=[{"role": "system", "content": "You are a witty, high-ticket sales closer."},
+                              {"role": "user", "content": prompt}]
+                )
+                analysis = response.choices[0].message.content
+                st.write("✅ Strategy Ready.")
+                status.update(label="Analysis Complete!", state="complete", expanded=False)
+            
+            st.chat_message("assistant").write(analysis)
+
+    # --- PAGE 3: LEAD DATABASE ---
+    elif page == "Lead Database":
+        st.title("📂 Lead Archive")
+        st.dataframe(df, use_container_width=True)
+        
+        if st.button("Force Refresh Data"):
+            st.cache_data.clear()
             st.rerun()
 
-        # DASHBOARD HEADER
-        st.title("Executive Intelligence Portal")
-        st.write("`NODE: SECURE` | `PIXEL: SERVER-SIDE` | `MARKET: AGGRESSIVE` ")
-
-        # KPIS
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Leads Synthesized", len(client_df))
-        m2.metric("Market Dominance", "22.4%")
-        m3.metric("Lead Temp", "88/100")
-
-        st.markdown("---")
-
-        # VISUAL SYNTHESIS
-        left, right = st.columns([2, 1])
-        with left:
-            st.subheader("📈 Lead Generation Architecture")
-            fig = px.area(client_df, x='Date', y='Ad_Spend', template="plotly_dark")
-            fig.update_traces(line_color='#38BDF8', line_shape='spline', fillcolor="rgba(56, 189, 248, 0.05)")
-            fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', margin=dict(l=0, r=0, t=20, b=0))
-            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-
-        with right:
-            st.subheader("🛡️ Syndicate Insights")
-            st.info(get_insights(client_df))
-            st.caption("Proprietary Analytics Engine v5.0")
-            
-            # Donut Chart for Status
-            if 'Status' in client_df.columns:
-                fig_pie = px.pie(client_df, names='Status', hole=0.7, color_discrete_sequence=['#38BDF8', '#1E293B'])
-                fig_pie.update_layout(paper_bgcolor='rgba(0,0,0,0)', showlegend=False, height=200, margin=dict(l=0,r=0,t=0,b=0))
-                st.plotly_chart(fig_pie, use_container_width=True)
-
-        # DATA FEED
-        st.subheader("📋 Proprietary Lead Feed (Scrubbed)")
-        display_df = client_df.copy().sort_values('Date', ascending=False)
-        # Visual Alpha: Add a random Heat Score
-        display_df['Heat'] = [f"🔥 {np.random.randint(85, 99)}%" for _ in range(len(display_df))]
-        st.dataframe(display_df[['Date', 'Lead_Name', 'Status', 'Heat']], use_container_width=True, hide_index=True)
-    else:
-        st.warning(f"Welcome {current_user}. Your account is being calibrated. Check back in 24 hours.")
+    st.sidebar.markdown("---")
+    if st.sidebar.button("Logout"):
+        st.session_state["password_correct"] = False
+        st.rerun()
